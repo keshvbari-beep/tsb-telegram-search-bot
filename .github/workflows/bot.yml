@@ -1,4 +1,4 @@
-name: TSB Search Bot
+name: TSB Search + Demo Bots
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  run-bot:
+  run-bots:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
@@ -23,5 +23,8 @@ jobs:
       - name: Install requirements
         run: pip install -r requirements.txt
 
-      - name: Run Telegram Bot
-        run: python bot.py
+      - name: Run Search Bot
+        run: python bot.py &
+
+      - name: Run Demo Bot
+        run: python demo_bot.py
