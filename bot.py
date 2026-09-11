@@ -14,11 +14,7 @@ from telegram.ext import (
     filters,
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8908632279:AAF-Glydyj_2ETCYkeswpwRuNKztWOql110")
-
-# =========================
-# CHANNELS + MONTHLY PRICE
-# =========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CHANNELS = {
     -1004338671388: {"prefix": "1", "price": 299},
@@ -32,7 +28,9 @@ DATA = {}
 
 if DATA_FILE.exists():
     try:
-        DATA = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        DATA = json.loads(
+            DATA_FILE.read_text(encoding="utf-8")
+        )
     except Exception:
         DATA = {}
 
@@ -41,43 +39,57 @@ logger = logging.getLogger(__name__)
 
 
 # =========================
-# SAVE / LOAD
+# SAVE DATA
 # =========================
 
 def save_data():
     DATA_FILE.write_text(
-        json.dumps(DATA, ensure_ascii=False, indent=2),
+        json.dumps(
+            DATA,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
 
 
 # =========================
-# CODE
+# EXTRACT CODE
 # =========================
 
 def extract_code(text):
+
     if not text:
         return None
 
-    m = re.search(
+    match = re.search(
         r"\b([1-4]P-[A-Za-z0-9_-]+)\b",
         text,
         re.I
     )
 
-    return m.group(1).upper() if m else None
+    if match:
+        return match.group(1).upper()
 
+    return None
+
+
+# =========================
+# PRIVATE POST LINK
+# =========================
 
 def make_post_link(chat_id, message_id):
+
     return (
-        f"https://t.me/c/"
-        f"{str(chat_id).replace('-100', '', 1)}/"
-        f"{message_id}"
+        "https://t.me/c/"
+        + str(chat_id).replace("-100", "", 1)
+        + "/"
+        + str(message_id)
     )
 
 
 # =========================
-# INDEX CHANNEL POSTS
+# INDEX CHANNEL POST
 # =========================
 
 async def index_channel_post(message):
@@ -87,22 +99,26 @@ async def index_channel_post(message):
     if chat_id not in CHANNELS:
         return
 
-    text = (message.text or message.caption or "").strip()
+    text = (
+        message.text
+        or message.caption
+        or ""
+    ).strip()
 
     code = extract_code(text)
 
     if not code:
         return
 
-    channel_prefix = CHANNELS[chat_id]["prefix"]
+    prefix = CHANNELS[chat_id]["prefix"]
 
-    if not code.startswith(channel_prefix + "P-"):
+    if not code.startswith(prefix + "P-"):
         return
 
     lines = [
-        x.strip()
-        for x in text.splitlines()
-        if x.strip()
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
     ]
 
     name = ""
@@ -117,6 +133,7 @@ async def index_channel_post(message):
             or low.startswith("name:")
             or low.startswith("title:")
         ):
+
             name = re.sub(
                 r"^(🎬\s*|name\s*:\s*|title\s*:\s*)",
                 "",
@@ -129,6 +146,7 @@ async def index_channel_post(message):
             or low.startswith("description:")
             or low.startswith("desc:")
         ):
+
             description = re.sub(
                 r"^(📝\s*|description\s*:\s*|desc\s*:\s*)",
                 "",
@@ -145,6 +163,7 @@ async def index_channel_post(message):
                 and not line.startswith("🔗")
                 and not line.startswith("http")
             ):
+
                 name = line
                 break
 
@@ -153,7 +172,10 @@ async def index_channel_post(message):
         "channel_id": chat_id,
         "message_id": message.message_id,
         "name": name or "Video",
-        "description": description or "No description available.",
+        "description": (
+            description
+            or "No description available."
+        ),
         "photo": (
             message.photo[-1].file_id
             if message.photo
@@ -167,15 +189,26 @@ async def index_channel_post(message):
 
     save_data()
 
-    logger.info("Indexed %s", code)
+    logger.info(
+        "Indexed: %s",
+        code
+    )
 
+
+# =========================
+# CHANNEL POST HANDLER
+# =========================
 
 async def channel_post_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if update.channel_post:
-        await index_channel_post(update.channel_post)
+
+        await index_channel_post(
+            update.channel_post
+        )
 
 
 # =========================
@@ -203,6 +236,7 @@ async def is_member(
             return True
 
         if member.status == "restricted":
+
             return bool(
                 getattr(
                     member,
@@ -222,7 +256,7 @@ async def is_member(
 
 
 # =========================
-# CREATE PAID CHANNEL LINK
+# PAID SUBSCRIPTION LINK
 # =========================
 
 async def create_paid_link(
@@ -232,13 +266,16 @@ async def create_paid_link(
 
     channel = CHANNELS[channel_id]
 
-    price = channel["price"]
-
-    result = await bot.create_chat_subscription_invite_link(
-        chat_id=channel_id,
-        name=f"TSB Channel {channel['prefix']}",
-        subscription_period=2592000,
-        subscription_price=price,
+    result = (
+        await bot.create_chat_subscription_invite_link(
+            chat_id=channel_id,
+            name=(
+                f"TSB Channel "
+                f"{channel['prefix']}"
+            ),
+            subscription_period=2592000,
+            subscription_price=channel["price"],
+        )
     )
 
     return result.invite_link
@@ -282,14 +319,14 @@ def search_items(query):
 
     prefix = None
 
-    m = re.match(
+    match = re.match(
         r"^([1-4])p(?:-|$)",
         q,
         re.I
     )
 
-    if m:
-        prefix = m.group(1)
+    if match:
+        prefix = match.group(1)
 
     results = []
 
@@ -307,8 +344,8 @@ def search_items(query):
                 continue
 
         searchable = " ".join(
-            str(item.get(k, ""))
-            for k in (
+            str(item.get(key, ""))
+            for key in (
                 "code",
                 "name",
                 "description"
@@ -336,7 +373,6 @@ async def send_result(
         item["channel_id"]
     )
 
-    # Already has access
     if await is_member(
         bot,
         user_id,
@@ -350,7 +386,6 @@ async def send_result(
 
         return
 
-    # No access → paid button
     try:
 
         paid_link = await create_paid_link(
@@ -366,8 +401,9 @@ async def send_result(
         )
 
         await message.reply_text(
-            "❌ Payment link create nahi ho saka.\n"
-            "Bot ko channel me Invite Users permission chahiye."
+            "❌ Payment link create nahi ho saka.\n\n"
+            "Bot ko channel me "
+            "Invite Users permission chahiye."
         )
 
         return
@@ -428,7 +464,7 @@ async def send_open_post(
         try:
 
             await message.reply_photo(
-                item["photo"],
+                photo=item["photo"],
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=keyboard
@@ -436,8 +472,12 @@ async def send_open_post(
 
             return
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            logger.warning(
+                "Photo send failed: %s",
+                e
+            )
 
     await message.reply_text(
         caption,
@@ -455,8 +495,12 @@ async def search_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not update.message:
+        return
+
     query = (
-        update.message.text or ""
+        update.message.text
+        or ""
     ).strip()
 
     if len(query) < 2:
@@ -503,7 +547,9 @@ async def search_handler(
         buttons.append([
             InlineKeyboardButton(
                 label[:60],
-                callback_data=f"open:{item['code']}"
+                callback_data=(
+                    f"open:{item['code']}"
+                )
             )
         ])
 
@@ -516,7 +562,7 @@ async def search_handler(
 
 
 # =========================
-# RESULT BUTTON
+# BUTTON HANDLER
 # =========================
 
 async def button_handler(
@@ -553,7 +599,7 @@ async def button_handler(
 
 
 # =========================
-# ERROR
+# ERROR HANDLER
 # =========================
 
 async def error_handler(
@@ -573,10 +619,7 @@ async def error_handler(
 
 def main():
 
-    if (
-        not BOT_TOKEN
-        or BOT_TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE"
-    ):
+    if not BOT_TOKEN:
 
         raise RuntimeError(
             "BOT_TOKEN set nahi hai."
