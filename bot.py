@@ -3,7 +3,13 @@ import re
 import logging
 
 from supabase import create_client
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,58 +19,119 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
+
+# =========================================================
 # SETTINGS
-# =========================
+# =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+
+# =========================================================
+# CHANNELS
+# =========================================================
+
 CHANNELS = {
-    -1004338671388: {"prefix": "1", "price": 299},
-    -1004490954138: {"prefix": "2", "price": 299},
-    -1003963263624: {"prefix": "3", "price": 299},
-    -1003472229143: {"prefix": "4", "price": 299},
+    -1004338671388: {
+        "prefix": "1",
+        "price": 299,
+    },
+
+    -1004490954138: {
+        "prefix": "2",
+        "price": 299,
+    },
+
+    -1003963263624: {
+        "prefix": "3",
+        "price": 299,
+    },
+
+    -1003472229143: {
+        "prefix": "4",
+        "price": 299,
+    },
 }
+
+
+# =========================================================
+# LOGGING
+# =========================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger(__name__)
 
-# =========================
-# SUPABASE
-# =========================
+
+# =========================================================
+# CHECK SETTINGS
+# =========================================================
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN missing")
+    raise RuntimeError(
+        "BOT_TOKEN missing"
+    )
 
 if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL missing")
+    raise RuntimeError(
+        "SUPABASE_URL missing"
+    )
 
 if not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_KEY missing")
+    raise RuntimeError(
+        "SUPABASE_KEY missing"
+    )
+
+
+# =========================================================
+# SUPABASE
+# =========================================================
 
 supabase = create_client(
     SUPABASE_URL,
-    SUPABASE_KEY
+    SUPABASE_KEY,
 )
 
-# =========================
-# EXTRACT CODE
-# =========================
+
+# =========================================================
+# SUPPORT / SEARCH BOT
+# =========================================================
+
+SUPPORT_URL = "https://t.me/RajanChauhan_club"
+
+SEARCH_BOT_URL = "https://t.me/TSB_Video_Search_Bot"
+
+
+# =========================================================
+# CODE EXTRACTION
+# =========================================================
 
 def extract_code(text):
+
     if not text:
         return None
 
+    text = text.strip()
+
     match = re.search(
-        r"\b([1-4]P-[A-Za-z0-9_-]+)\b",
+        r"(?:^|\s)([1-4]P-[A-Za-z0-9_-]+)(?:\s|$)",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
+    )
+
+    if match:
+        return match.group(1).upper()
+
+    # Fallback
+    match = re.search(
+        r"([1-4]P-[A-Za-z0-9_-]+)",
+        text,
+        re.IGNORECASE,
     )
 
     if match:
@@ -72,294 +139,142 @@ def extract_code(text):
 
     return None
 
-# =========================
+
+# =========================================================
 # POST LINK
-# =========================
+# =========================================================
 
-def make_post_link(chat_id, message_id):
+def make_post_link(
+    channel_id,
+    message_id,
+):
 
-    clean_id = str(chat_id).replace(
-        "-100",
-        "",
-        1
-    )
+    clean_id = str(channel_id)
+
+    if clean_id.startswith("-100"):
+        clean_id = clean_id[4:]
 
     return (
         f"https://t.me/c/{clean_id}/{message_id}"
     )
 
-# =========================
-# SAVE CHANNEL POST
-# =========================
 
-async def save_channel_post(message):
+# =========================================================
+# DATABASE SEARCH
+# =========================================================
 
-    chat_id = message.chat.id
+def search_items(query):
 
-    logger.info(
-        "CHANNEL POST RECEIVED | chat=%s | message=%s",
-        chat_id,
-        message.message_id
-    )
+    query = query.strip()
 
-    # Check channel
-    if chat_id not in CHANNELS:
-
-        logger.info(
-            "Channel not configured: %s",
-            chat_id
-        )
-
-        return
-
-    text = (
-        message.text
-        or message.caption
-        or ""
-    ).strip()
-
-    logger.info(
-        "CHANNEL TEXT: %s",
-        text[:500]
-    )
-
-    code = extract_code(text)
-
-    if not code:
-
-        logger.info(
-            "No code found in channel post."
-        )
-
-        return
-
-    prefix = CHANNELS[chat_id]["prefix"]
-
-    if not code.startswith(prefix + "P-"):
-
-        logger.info(
-            "Wrong prefix: %s",
-            code
-        )
-
-        return
-
-    # -------------------------
-    # NAME / DESCRIPTION
-    # -------------------------
-
-    lines = [
-        x.strip()
-        for x in text.splitlines()
-        if x.strip()
-    ]
-
-    name = ""
-    description = ""
-
-    for line in lines:
-
-        low = line.lower()
-
-        if (
-            "🎬" in line
-            or low.startswith("name:")
-            or low.startswith("title:")
-        ):
-
-            name = re.sub(
-                r"^(🎬\s*|name\s*:\s*|title\s*:\s*)",
-                "",
-                line,
-                flags=re.IGNORECASE
-            ).strip()
-
-        elif (
-            "📝" in line
-            or low.startswith("description:")
-            or low.startswith("desc:")
-        ):
-
-            description = re.sub(
-                r"^(📝\s*|description\s*:\s*|desc\s*:\s*)",
-                "",
-                line,
-                flags=re.IGNORECASE
-            ).strip()
-
-    # -------------------------
-    # FALLBACK NAME
-    # -------------------------
-
-    if not name:
-
-        for line in lines:
-
-            if line.upper() == code:
-                continue
-
-            if line.startswith("http"):
-                continue
-
-            if line.startswith("🔗"):
-                continue
-
-            if line.startswith("📝"):
-                continue
-
-            name = line
-            break
-
-    # -------------------------
-    # PHOTO
-    # -------------------------
-
-    photo = None
-
-    if message.photo:
-
-        photo = message.photo[-1].file_id
-
-    # -------------------------
-    # DATABASE DATA
-    # -------------------------
-
-    data = {
-        "code": code,
-        "channel_id": str(chat_id),
-        "message_id": str(message.message_id),
-        "name": name or "Video",
-        "description": description or "No description available.",
-        "photo": photo
-    }
-
-    logger.info(
-        "TRYING SUPABASE SAVE: %s",
-        data
-    )
+    if not query:
+        return []
 
     try:
 
-        result = (
+        # =================================================
+        # 1. EXACT CODE SEARCH
+        # =================================================
+
+        code = extract_code(query)
+
+        if code:
+
+            logger.info(
+                "Exact code search: %s",
+                code,
+            )
+
+            response = (
+                supabase
+                .table("videos")
+                .select("*")
+                .eq("code", code)
+                .limit(10)
+                .execute()
+            )
+
+            results = response.data or []
+
+            if results:
+                return results
+
+        # =================================================
+        # 2. CODE PARTIAL SEARCH
+        # =================================================
+
+        response = (
             supabase
             .table("videos")
-            .upsert(
-                data,
-                on_conflict="code"
+            .select("*")
+            .ilike(
+                "code",
+                f"%{query}%",
             )
+            .limit(10)
             .execute()
         )
 
-        logger.info(
-            "SUPABASE SAVE SUCCESS: %s",
-            code
+        results = response.data or []
+
+        if results:
+            return results
+
+        # =================================================
+        # 3. NAME SEARCH
+        # =================================================
+
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .ilike(
+                "name",
+                f"%{query}%",
+            )
+            .limit(10)
+            .execute()
         )
 
-        logger.info(
-            "SUPABASE RESULT: %s",
-            result.data
+        results = response.data or []
+
+        if results:
+            return results
+
+        # =================================================
+        # 4. DESCRIPTION SEARCH
+        # =================================================
+
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .ilike(
+                "description",
+                f"%{query}%",
+            )
+            .limit(10)
+            .execute()
         )
+
+        return response.data or []
 
     except Exception as e:
 
         logger.exception(
-            "SUPABASE SAVE ERROR: %s",
-            e
+            "DATABASE SEARCH ERROR"
         )
 
-# =========================
-# CHANNEL POST HANDLER
-# =========================
+        return []
 
-async def channel_post_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
 
-    if not update.channel_post:
-
-        logger.info(
-            "CHANNEL HANDLER CALLED BUT NO POST"
-        )
-
-        return
-
-    await save_channel_post(
-        update.channel_post
-    )
-
-# =========================
-# MEMBER CHECK
-# =========================
-
-async def is_member(
-    bot,
-    user_id,
-    channel_id
-):
-
-    try:
-
-        member = await bot.get_chat_member(
-            channel_id,
-            user_id
-        )
-
-        if member.status in (
-            "creator",
-            "administrator",
-            "member"
-        ):
-            return True
-
-        if member.status == "restricted":
-
-            return bool(
-                getattr(
-                    member,
-                    "is_member",
-                    False
-                )
-            )
-
-    except Exception as e:
-
-        logger.warning(
-            "Membership check error: %s",
-            e
-        )
-
-    return False
-
-# =========================
-# PAYMENT LINK
-# =========================
-
-async def create_paid_link(
-    bot,
-    channel_id
-):
-
-    channel = CHANNELS[channel_id]
-
-    result = (
-        await bot.create_chat_subscription_invite_link(
-            chat_id=channel_id,
-            name=f"TSB Channel {channel['prefix']}",
-            subscription_period=2592000,
-            subscription_price=channel["price"]
-        )
-    )
-
-    return result.invite_link
-
-# =========================
+# =========================================================
 # START
-# =========================
+# =========================================================
 
 async def start(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
 
     if not update.message:
@@ -375,87 +290,128 @@ async def start(
         "4P-500"
     )
 
-# =========================
-# DATABASE SEARCH
-# =========================
 
-def search_items(query):
+# =========================================================
+# MEMBER CHECK
+# =========================================================
 
-    q = query.strip()
-
-    if not q:
-        return []
+async def is_member(
+    bot,
+    user_id,
+    channel_id,
+):
 
     try:
 
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .ilike(
-                "code",
-                f"%{q}%"
-            )
-            .limit(10)
-            .execute()
+        member = await bot.get_chat_member(
+            channel_id,
+            user_id,
         )
 
-        results = response.data or []
+        if member.status in (
+            "creator",
+            "administrator",
+            "member",
+        ):
+            return True
 
-        if results:
-            return results
+        if member.status == "restricted":
 
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .or_(
-                f"name.ilike.%{q}%,"
-                f"description.ilike.%{q}%"
+            return bool(
+                getattr(
+                    member,
+                    "is_member",
+                    False,
+                )
             )
-            .limit(10)
-            .execute()
-        )
-
-        return response.data or []
 
     except Exception as e:
 
-        logger.exception(
-            "SEARCH ERROR: %s",
-            e
+        logger.warning(
+            "Membership check error: %s",
+            e,
         )
 
-        return []
+    return False
 
-# =========================
+
+# =========================================================
+# PAYMENT LINK
+# =========================================================
+
+async def create_paid_link(
+    bot,
+    channel_id,
+):
+
+    channel = CHANNELS[channel_id]
+
+    result = (
+        await bot.create_chat_subscription_invite_link(
+            chat_id=channel_id,
+            name=f"TSB Channel {channel['prefix']}",
+            subscription_period=2592000,
+            subscription_price=channel["price"],
+        )
+    )
+
+    return result.invite_link
+
+
+# =========================================================
 # OPEN POST
-# =========================
+# =========================================================
 
 async def send_open_post(
     message,
-    item
+    item,
 ):
 
+    channel_id = int(
+        item["channel_id"]
+    )
+
+    message_id = int(
+        item["message_id"]
+    )
+
     post_link = make_post_link(
-        int(item["channel_id"]),
-        int(item["message_id"])
+        channel_id,
+        message_id,
+    )
+
+    code = item.get("code") or "Unknown"
+
+    name = (
+        item.get("name")
+        or "Video"
+    )
+
+    description = (
+        item.get("description")
+        or "No description available."
     )
 
     caption = (
-        f"🏷️ <b>{item['code']}</b>\n\n"
-        f"🎬 <b>{item.get('name') or 'Video'}</b>\n\n"
-        f"📝 {item.get('description') or 'No description available.'}"
+        f"🏷️ <b>{code}</b>\n\n"
+        f"🎬 <b>{name}</b>\n\n"
+        f"📝 {description}"
     )
 
-    keyboard = InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton(
-                "📂 Open Post",
-                url=post_link
-            )
+            [
+                InlineKeyboardButton(
+                    "📂 Open Post",
+                    url=post_link,
+                )
+            ]
         ]
-    ])
+    )
+
+    # =====================================================
+    # PHOTO RESULT
+    # =====================================================
 
     if item.get("photo"):
 
@@ -465,7 +421,7 @@ async def send_open_post(
                 photo=item["photo"],
                 caption=caption,
                 parse_mode="HTML",
-                reply_markup=keyboard
+                reply_markup=keyboard,
             )
 
             return
@@ -473,65 +429,97 @@ async def send_open_post(
         except Exception as e:
 
             logger.warning(
-                "PHOTO ERROR: %s",
-                e
+                "Photo send failed: %s",
+                e,
             )
+
+    # =====================================================
+    # TEXT RESULT
+    # =====================================================
 
     await message.reply_text(
         caption,
         parse_mode="HTML",
-        reply_markup=keyboard
+        reply_markup=keyboard,
     )
 
-# =========================
+
+# =========================================================
 # SEND RESULT
-# =========================
+# =========================================================
 
 async def send_result(
     message,
     bot,
     user_id,
-    item
+    item,
 ):
 
-    channel_id = int(
-        item["channel_id"]
-    )
+    try:
+
+        channel_id = int(
+            item["channel_id"]
+        )
+
+    except Exception:
+
+        await message.reply_text(
+            "❌ Channel information गलत है।"
+        )
+
+        return
+
+    if channel_id not in CHANNELS:
+
+        await message.reply_text(
+            "❌ Channel configured नहीं है।"
+        )
+
+        return
+
+    # =====================================================
+    # CHECK ACCESS
+    # =====================================================
 
     if await is_member(
         bot,
         user_id,
-        channel_id
+        channel_id,
     ):
 
         await send_open_post(
             message,
-            item
+            item,
         )
 
         return
+
+    # =====================================================
+    # PAYMENT
+    # =====================================================
 
     try:
 
         paid_link = await create_paid_link(
             bot,
-            channel_id
+            channel_id,
         )
 
     except Exception as e:
 
         logger.exception(
-            "PAYMENT LINK ERROR: %s",
-            e
+            "PAYMENT LINK ERROR"
         )
 
         await message.reply_text(
-            "❌ Payment link create nahi ho saka."
+            "❌ Payment link create nahi ho saka.\n\n"
+            "Please try again later."
         )
 
         return
 
     prefix = CHANNELS[channel_id]["prefix"]
+
     price = CHANNELS[channel_id]["price"]
 
     text = (
@@ -542,28 +530,37 @@ async def send_result(
         "channel access dega."
     )
 
-    keyboard = InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton(
-                "💳 Subscribe & Access",
-                url=paid_link
-            )
+            [
+                InlineKeyboardButton(
+                    "💳 Subscribe & Access",
+                    url=paid_link,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💬 Support",
+                    url=SUPPORT_URL,
+                )
+            ],
         ]
-    ])
+    )
 
     await message.reply_text(
         text,
         parse_mode="HTML",
-        reply_markup=keyboard
+        reply_markup=keyboard,
     )
 
-# =========================
+
+# =========================================================
 # SEARCH HANDLER
-# =========================
+# =========================================================
 
 async def search_handler(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
 
     if not update.message:
@@ -582,7 +579,18 @@ async def search_handler(
 
         return
 
-    results = search_items(query)
+    logger.info(
+        "USER SEARCH: %s",
+        query,
+    )
+
+    results = search_items(
+        query
+    )
+
+    # =====================================================
+    # NO RESULT
+    # =====================================================
 
     if not results:
 
@@ -590,10 +598,16 @@ async def search_handler(
             "❌ No result found.\n\n"
             "Example:\n"
             "1P-234\n"
-            "2P-001"
+            "2P-001\n"
+            "3P-125\n"
+            "4P-500"
         )
 
         return
+
+    # =====================================================
+    # ONE RESULT
+    # =====================================================
 
     if len(results) == 1:
 
@@ -601,41 +615,57 @@ async def search_handler(
             update.message,
             context.bot,
             update.effective_user.id,
-            results[0]
+            results[0],
         )
 
         return
+
+    # =====================================================
+    # MULTIPLE RESULTS
+    # =====================================================
 
     buttons = []
 
     for item in results:
 
-        label = (
-            f"📂 {item['code']} — "
-            f"{item.get('name') or 'Video'}"
+        code = item.get(
+            "code",
+            "Unknown",
         )
 
-        buttons.append([
-            InlineKeyboardButton(
-                label[:60],
-                callback_data=f"open:{item['code']}"
-            )
-        ])
+        name = item.get(
+            "name",
+            "Video",
+        )
+
+        label = (
+            f"📂 {code} — {name}"
+        )
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    label[:60],
+                    callback_data=f"open:{code}",
+                )
+            ]
+        )
 
     await update.message.reply_text(
         f"🔎 {len(results)} results found:",
         reply_markup=InlineKeyboardMarkup(
             buttons
-        )
+        ),
     )
 
-# =========================
-# BUTTON
-# =========================
+
+# =========================================================
+# RESULT BUTTON
+# =========================================================
 
 async def button_handler(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
 
     query = update.callback_query
@@ -644,7 +674,10 @@ async def button_handler(
 
     code = (
         query.data
-        .split("open:", 1)[1]
+        .split(
+            "open:",
+            1,
+        )[1]
         .upper()
     )
 
@@ -661,11 +694,10 @@ async def button_handler(
 
         results = response.data or []
 
-    except Exception as e:
+    except Exception:
 
         logger.exception(
-            "BUTTON DATABASE ERROR: %s",
-            e
+            "BUTTON DATABASE ERROR"
         )
 
         results = []
@@ -682,87 +714,103 @@ async def button_handler(
         query.message,
         context.bot,
         query.from_user.id,
-        results[0]
+        results[0],
     )
 
-# =========================
-# ERROR
-# =========================
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
 
 async def error_handler(
     update,
-    context
+    context,
 ):
 
     logger.exception(
         "TELEGRAM ERROR: %s",
-        context.error
+        context.error,
     )
 
-# =========================
+
+# =========================================================
 # MAIN
-# =========================
+# =========================================================
 
 def main():
 
-    app = (
+    application = (
         Application
         .builder()
         .token(BOT_TOKEN)
         .build()
     )
 
-    # CHANNEL POSTS
-    app.add_handler(
-        MessageHandler(
-            filters.UpdateType.CHANNEL_POST,
-            channel_post_handler
-        )
-    )
+    # =====================================================
+    # START
+    # =====================================================
 
-    # COMMANDS
-    app.add_handler(
+    application.add_handler(
         CommandHandler(
             "start",
-            start
+            start,
         )
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler(
             "help",
-            start
+            start,
         )
     )
 
-    # BUTTONS
-    app.add_handler(
+    # =====================================================
+    # MULTIPLE RESULT BUTTON
+    # =====================================================
+
+    application.add_handler(
         CallbackQueryHandler(
             button_handler,
-            pattern=r"^open:"
+            pattern=r"^open:",
         )
     )
 
+    # =====================================================
     # SEARCH
-    app.add_handler(
+    # =====================================================
+
+    application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            search_handler
+            filters.TEXT
+            & ~filters.COMMAND,
+            search_handler,
         )
     )
 
-    app.add_error_handler(
+    # =====================================================
+    # ERROR
+    # =====================================================
+
+    application.add_error_handler(
         error_handler
     )
 
     logger.info(
-        "TSB SEARCH BOT STARTED"
+        "TSB VIDEO SEARCH BOT STARTED"
     )
 
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES
+    # =====================================================
+    # RUN
+    # =====================================================
+
+    application.run_polling(
+        drop_pending_updates=True
     )
 
+
+# =========================================================
+# START PROGRAM
+# =========================================================
 
 if __name__ == "__main__":
     main()
