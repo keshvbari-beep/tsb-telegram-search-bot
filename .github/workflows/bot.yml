@@ -1,42 +1,38 @@
 name: TSB Searching Bot
 
 on:
-workflow_dispatch:
-push:
-branches:
-- main
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-searching-bot:
-runs-on: ubuntu-latest
-timeout-minutes: 350
+  searching-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Setup Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.11"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-  - name: Install requirements
-    run: |
-      python -m pip install --upgrade pip
-      pip install -r requirements.txt
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-  - name: Stop duplicate bot processes
-    run: |
-      echo "Starting single TSB Search Bot instance..."
-
-  - name: Run TSB Search Bot
-    env:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
-    run: |
-      python bot.py
+      - name: Run TSB Search Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+        run: |
+          python bot.py
