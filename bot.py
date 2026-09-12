@@ -30,7 +30,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 
 # =========================================================
-# CHANNELS
+# CHANNEL SETTINGS
 # =========================================================
 
 CHANNELS = {
@@ -102,7 +102,49 @@ SEARCH_BOT_URL = "https://t.me/TSB_Video_Search_Bot"
 
 
 # =========================================================
-# CODE EXTRACTION
+# NORMALIZE CODE
+# =========================================================
+
+def normalize_code(text):
+
+    if not text:
+        return None
+
+    text = str(text).strip().upper()
+
+    # Remove unwanted spaces around hyphen
+    text = re.sub(
+        r"\s*-\s*",
+        "-",
+        text,
+    )
+
+    # Remove all spaces
+    text = re.sub(
+        r"\s+",
+        "",
+        text,
+    )
+
+    # Accept 1P-444 / 2P-555 / 3P-123 / 4P-999
+    match = re.fullmatch(
+        r"([1-4]P)-([A-Z0-9_-]+)",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return (
+            match.group(1).upper()
+            + "-"
+            + match.group(2).upper()
+        )
+
+    return None
+
+
+# =========================================================
+# EXTRACT CODE FROM MESSAGE
 # =========================================================
 
 def extract_code(text):
@@ -110,41 +152,49 @@ def extract_code(text):
     if not text:
         return None
 
-    text = text.strip()
+    text = str(text).strip().upper()
 
+    # Direct code
+    code = normalize_code(text)
+
+    if code:
+        return code
+
+    # Search code inside text
     match = re.search(
-        r"(?:^|\s)([1-4]P-[A-Za-z0-9_-]+)(?:\s|$)",
+        r"\b([1-4]P)\s*-\s*([A-Z0-9_-]+)\b",
         text,
         re.IGNORECASE,
     )
 
     if match:
-        return match.group(1).upper()
 
-    match = re.search(
-        r"([1-4]P-[A-Za-z0-9_-]+)",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-        return match.group(1).upper()
+        return (
+            match.group(1).upper()
+            + "-"
+            + match.group(2).upper()
+        )
 
     return None
 
 
 # =========================================================
-# POST LINK
+# TELEGRAM POST LINK
 # =========================================================
 
-def make_post_link(channel_id, message_id):
+def make_post_link(
+    channel_id,
+    message_id,
+):
 
     clean_id = str(channel_id)
 
     if clean_id.startswith("-100"):
         clean_id = clean_id[4:]
 
-    return f"https://t.me/c/{clean_id}/{message_id}"
+    return (
+        f"https://t.me/c/{clean_id}/{message_id}"
+    )
 
 
 # =========================================================
@@ -153,65 +203,84 @@ def make_post_link(channel_id, message_id):
 
 def search_items(query):
 
-    query = query.strip()
+    query = str(query).strip()
 
     if not query:
         return []
 
     try:
 
+        # =================================================
+        # EXTRACT / NORMALIZE CODE
+        # =================================================
+
         code = extract_code(query)
 
-        logger.info("SEARCH QUERY: %s", query)
-        logger.info("EXTRACTED CODE: %s", code)
-
-        # =================================================
-        # DATABASE CONNECTION TEST
-        # =================================================
-
-        test = (
-            supabase
-            .table("videos")
-            .select("id,code,name")
-            .limit(5)
-            .execute()
+        logger.info(
+            "USER QUERY: %s",
+            query,
         )
 
         logger.info(
-            "DATABASE TEST SUCCESS: %s",
-            test.data
+            "NORMALIZED CODE: %s",
+            code,
         )
 
         # =================================================
-        # EXACT CODE SEARCH
+        # 1. EXACT CODE SEARCH
         # =================================================
 
         if code:
-
-            logger.info(
-                "EXACT CODE SEARCH: %s",
-                code
-            )
 
             response = (
                 supabase
                 .table("videos")
                 .select("*")
                 .eq("code", code)
-                .limit(10)
+                .limit(50)
                 .execute()
             )
 
+            results = response.data or []
+
             logger.info(
-                "EXACT SEARCH RESULT: %s",
-                response.data
+                "EXACT CODE RESULTS: %s",
+                len(results),
             )
 
-            if response.data:
-                return response.data
+            if results:
+                return results
 
         # =================================================
-        # PARTIAL CODE SEARCH
+        # 2. CASE-INSENSITIVE CODE SEARCH
+        # =================================================
+
+        if code:
+
+            response = (
+                supabase
+                .table("videos")
+                .select("*")
+                .ilike(
+                    "code",
+                    code,
+                )
+                .limit(50)
+                .execute()
+            )
+
+            results = response.data or []
+
+            logger.info(
+                "CASE-INSENSITIVE CODE RESULTS: %s",
+                len(results),
+            )
+
+            if results:
+                return results
+
+        # =================================================
+        # 3. PARTIAL CODE SEARCH
         # =================================================
 
         response = (
@@ -220,22 +289,19 @@ def search_items(query):
             .select("*")
             .ilike(
                 "code",
-                f"%{query}%"
+                f"%{query}%",
             )
-            .limit(10)
+            .limit(50)
             .execute()
         )
 
-        logger.info(
-            "PARTIAL CODE RESULT: %s",
-            response.data
-        )
+        results = response.data or []
 
-        if response.data:
-            return response.data
+        if results:
+            return results
 
         # =================================================
-        # NAME SEARCH
+        # 4. NAME SEARCH
         # =================================================
 
         response = (
@@ -244,22 +310,19 @@ def search_items(query):
             .select("*")
             .ilike(
                 "name",
-                f"%{query}%"
+                f"%{query}%",
             )
-            .limit(10)
+            .limit(50)
             .execute()
         )
 
-        logger.info(
-            "NAME SEARCH RESULT: %s",
-            response.data
-        )
+        results = response.data or []
 
-        if response.data:
-            return response.data
+        if results:
+            return results
 
         # =================================================
-        # DESCRIPTION SEARCH
+        # 5. DESCRIPTION SEARCH
         # =================================================
 
         response = (
@@ -268,15 +331,10 @@ def search_items(query):
             .select("*")
             .ilike(
                 "description",
-                f"%{query}%"
+                f"%{query}%",
             )
-            .limit(10)
+            .limit(50)
             .execute()
-        )
-
-        logger.info(
-            "DESCRIPTION SEARCH RESULT: %s",
-            response.data
         )
 
         return response.data or []
@@ -285,12 +343,9 @@ def search_items(query):
 
         logger.exception(
             "DATABASE SEARCH ERROR: %s",
-            e
+            e,
         )
 
-        # IMPORTANT:
-        # Error ko hide nahi karna.
-        # GitHub Actions log me exact error dikhega.
         raise
 
 
@@ -318,7 +373,7 @@ async def start(
 
 
 # =========================================================
-# MEMBER CHECK
+# CHECK CHANNEL MEMBERSHIP
 # =========================================================
 
 async def is_member(
@@ -354,7 +409,7 @@ async def is_member(
     except Exception as e:
 
         logger.warning(
-            "Membership check error: %s",
+            "MEMBERSHIP CHECK ERROR: %s",
             e,
         )
 
@@ -362,7 +417,7 @@ async def is_member(
 
 
 # =========================================================
-# PAYMENT LINK
+# CREATE PAYMENT LINK
 # =========================================================
 
 async def create_paid_link(
@@ -385,7 +440,7 @@ async def create_paid_link(
 
 
 # =========================================================
-# OPEN POST
+# SEND OPEN POST
 # =========================================================
 
 async def send_open_post(
@@ -393,13 +448,27 @@ async def send_open_post(
     item,
 ):
 
-    channel_id = int(
-        item["channel_id"]
-    )
+    try:
 
-    message_id = int(
-        item["message_id"]
-    )
+        channel_id = int(
+            item["channel_id"]
+        )
+
+        message_id = int(
+            item["message_id"]
+        )
+
+    except Exception:
+
+        await message.reply_text(
+            "❌ Post information गलत है."
+        )
+
+        return
+
+    # =====================================================
+    # EXACT POST LINK
+    # =====================================================
 
     post_link = make_post_link(
         channel_id,
@@ -439,7 +508,7 @@ async def send_open_post(
     )
 
     # =====================================================
-    # PHOTO RESULT
+    # PHOTO
     # =====================================================
 
     if item.get("photo"):
@@ -458,12 +527,12 @@ async def send_open_post(
         except Exception as e:
 
             logger.warning(
-                "Photo send failed: %s",
+                "PHOTO SEND ERROR: %s",
                 e,
             )
 
     # =====================================================
-    # TEXT RESULT
+    # TEXT FALLBACK
     # =====================================================
 
     await message.reply_text(
@@ -493,7 +562,7 @@ async def send_result(
     except Exception:
 
         await message.reply_text(
-            "❌ Channel information गलत है।"
+            "❌ Channel information गलत है."
         )
 
         return
@@ -501,7 +570,7 @@ async def send_result(
     if channel_id not in CHANNELS:
 
         await message.reply_text(
-            "❌ Channel configured नहीं है।"
+            "❌ Channel configured नहीं है."
         )
 
         return
@@ -609,28 +678,25 @@ async def search_handler(
         return
 
     logger.info(
-        "USER SEARCH: %s",
+        "SEARCH REQUEST: %s",
         query,
     )
 
     # =====================================================
-    # DATABASE SEARCH
+    # SEARCH DATABASE
     # =====================================================
 
     try:
 
-        results = search_items(query)
-
-    except Exception as e:
-
-        logger.exception(
-            "SEARCH HANDLER DATABASE ERROR: %s",
-            e
+        results = search_items(
+            query
         )
 
+    except Exception:
+
         await update.message.reply_text(
-            "⚠️ Database connection/search error.\n\n"
-            "Admin ko GitHub Actions log check karna hoga."
+            "⚠️ Database search error.\n\n"
+            "Please try again later."
         )
 
         return
@@ -675,14 +741,14 @@ async def search_handler(
 
     for item in results:
 
-        code = item.get(
-            "code",
-            "Unknown",
+        code = (
+            item.get("code")
+            or "Unknown"
         )
 
-        name = item.get(
-            "name",
-            "Video",
+        name = (
+            item.get("name")
+            or "Video"
         )
 
         label = (
@@ -797,10 +863,7 @@ def main():
         .build()
     )
 
-    # =====================================================
     # START
-    # =====================================================
-
     application.add_handler(
         CommandHandler(
             "start",
@@ -808,6 +871,7 @@ def main():
         )
     )
 
+    # HELP
     application.add_handler(
         CommandHandler(
             "help",
@@ -815,10 +879,7 @@ def main():
         )
     )
 
-    # =====================================================
     # RESULT BUTTON
-    # =====================================================
-
     application.add_handler(
         CallbackQueryHandler(
             button_handler,
@@ -826,10 +887,7 @@ def main():
         )
     )
 
-    # =====================================================
     # SEARCH
-    # =====================================================
-
     application.add_handler(
         MessageHandler(
             filters.TEXT
@@ -838,10 +896,7 @@ def main():
         )
     )
 
-    # =====================================================
     # ERROR
-    # =====================================================
-
     application.add_error_handler(
         error_handler
     )
@@ -850,17 +905,13 @@ def main():
         "TSB VIDEO SEARCH BOT STARTED"
     )
 
-    # =====================================================
-    # RUN BOT
-    # =====================================================
-
     application.run_polling(
         drop_pending_updates=True
     )
 
 
 # =========================================================
-# START PROGRAM
+# RUN
 # =========================================================
 
 if __name__ == "__main__":
