@@ -1,10 +1,8 @@
 import os
 import re
-import json
 import logging
-import subprocess
-from pathlib import Path
 
+from supabase import create_client
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -15,7 +13,13 @@ from telegram.ext import (
     filters,
 )
 
+# =========================
+# SETTINGS
+# =========================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 CHANNELS = {
     -1004338671388: {"prefix": "1", "price": 299},
@@ -24,88 +28,24 @@ CHANNELS = {
     -1003472229143: {"prefix": "4", "price": 299},
 }
 
-DATA_FILE = Path("search_data.json")
-DATA = {}
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # =========================
-# LOAD DATA
-# =========================
-
-if DATA_FILE.exists():
-    try:
-        DATA = json.loads(
-            DATA_FILE.read_text(encoding="utf-8")
-        )
-    except Exception:
-        DATA = {}
-
-
-# =========================
-# SAVE DATA TO GITHUB
+# SUPABASE
 # =========================
 
-def save_data():
-    DATA_FILE.write_text(
-        json.dumps(
-            DATA,
-            ensure_ascii=False,
-            indent=2
-        ),
-        encoding="utf-8"
-    )
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Supabase settings missing.")
 
-    try:
-        subprocess.run(
-            ["git", "config", "user.name", "TSB Search Bot"],
-            check=False
-        )
-
-        subprocess.run(
-            ["git", "config", "user.email", "tsb-search-bot@users.noreply.github.com"],
-            check=False
-        )
-
-        subprocess.run(
-            ["git", "add", "search_data.json"],
-            check=False
-        )
-
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            check=False
-        )
-
-        if result.returncode != 0:
-            subprocess.run(
-                [
-                    "git",
-                    "commit",
-                    "-m",
-                    "Update search data"
-                ],
-                check=False
-            )
-
-            subprocess.run(
-                ["git", "push"],
-                check=False
-            )
-
-            logger.info("Search data saved to GitHub.")
-
-    except Exception as e:
-        logger.error(
-            "GitHub save error: %s",
-            e
-        )
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
 
 # =========================
-# EXTRACT CODE
+# CODE
 # =========================
 
 def extract_code(text):
@@ -138,10 +78,11 @@ def make_post_link(chat_id, message_id):
 
 
 # =========================
-# INDEX CHANNEL POST
+# SAVE VIDEO
 # =========================
 
 async def index_channel_post(message):
+
     chat_id = message.chat.id
 
     if chat_id not in CHANNELS:
@@ -173,6 +114,7 @@ async def index_channel_post(message):
     description = ""
 
     for line in lines:
+
         low = line.lower()
 
         if (
@@ -200,7 +142,9 @@ async def index_channel_post(message):
             ).strip()
 
     if not name:
+
         for line in lines:
+
             if (
                 line.upper() != code
                 and not line.startswith("🔗")
@@ -209,50 +153,58 @@ async def index_channel_post(message):
                 name = line
                 break
 
-    DATA[code] = {
+    photo = None
+
+    if message.photo:
+        photo = message.photo[-1].file_id
+
+    data = {
         "code": code,
-        "channel_id": chat_id,
-        "message_id": message.message_id,
+        "channel_id": str(chat_id),
+        "message_id": str(message.message_id),
         "name": name or "Video",
-        "description": (
-            description
-            or "No description available."
-        ),
-        "photo": (
-            message.photo[-1].file_id
-            if message.photo
-            else None
-        ),
-        "post_link": make_post_link(
-            chat_id,
-            message.message_id
-        ),
+        "description": description or "No description available.",
+        "photo": photo,
     }
 
-    save_data()
+    try:
 
-    logger.info(
-        "Indexed permanently: %s",
-        code
-    )
+        supabase.table("videos").upsert(
+            data,
+            on_conflict="code"
+        ).execute()
+
+        logger.info(
+            "Saved permanently: %s",
+            code
+        )
+
+    except Exception as e:
+
+        logger.error(
+            "Supabase save error: %s",
+            e
+        )
 
 
 # =========================
-# CHANNEL POST HANDLER
+# CHANNEL POSTS
 # =========================
 
 async def channel_post_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if update.channel_post:
+
         await index_channel_post(
             update.channel_post
         )
 
 
 # =========================
-# MEMBERSHIP
+# MEMBER CHECK
 # =========================
 
 async def is_member(
@@ -260,7 +212,9 @@ async def is_member(
     user_id,
     channel_id
 ):
+
     try:
+
         member = await bot.get_chat_member(
             channel_id,
             user_id
@@ -274,6 +228,7 @@ async def is_member(
             return True
 
         if member.status == "restricted":
+
             return bool(
                 getattr(
                     member,
@@ -283,6 +238,7 @@ async def is_member(
             )
 
     except Exception as e:
+
         logger.warning(
             "Membership check failed: %s",
             e
@@ -292,13 +248,14 @@ async def is_member(
 
 
 # =========================
-# PAID LINK
+# PAYMENT LINK
 # =========================
 
 async def create_paid_link(
     bot,
     channel_id
 ):
+
     channel = CHANNELS[channel_id]
 
     result = (
@@ -321,6 +278,7 @@ async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     await update.message.reply_text(
         "🔎 TSB Search Bot\n\n"
         "Apna Code ya Video Name search karo.\n\n"
@@ -333,57 +291,54 @@ async def start(
 
 
 # =========================
-# SEARCH
+# SEARCH DATABASE
 # =========================
 
 def search_items(query):
-    q = query.strip().lower()
+
+    q = query.strip()
 
     if not q:
         return []
 
-    exact = q.upper()
+    try:
 
-    if exact in DATA:
-        return [DATA[exact]]
-
-    prefix = None
-
-    match = re.match(
-        r"^([1-4])p(?:-|$)",
-        q,
-        re.I
-    )
-
-    if match:
-        prefix = match.group(1)
-
-    results = []
-
-    for item in DATA.values():
-        code = str(
-            item.get("code", "")
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .ilike("code", f"%{q}%")
+            .limit(10)
+            .execute()
         )
 
-        if prefix:
-            if not code.upper().startswith(
-                prefix + "P-"
-            ):
-                continue
+        results = response.data or []
 
-        searchable = " ".join(
-            str(item.get(key, ""))
-            for key in (
-                "code",
-                "name",
-                "description"
+        if results:
+            return results
+
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .or_(
+                f"name.ilike.%{q}%,"
+                f"description.ilike.%{q}%"
             )
-        ).lower()
+            .limit(10)
+            .execute()
+        )
 
-        if q in searchable:
-            results.append(item)
+        return response.data or []
 
-    return results[:10]
+    except Exception as e:
+
+        logger.error(
+            "Search error: %s",
+            e
+        )
+
+        return []
 
 
 # =========================
@@ -396,6 +351,7 @@ async def send_result(
     user_id,
     item
 ):
+
     channel_id = int(
         item["channel_id"]
     )
@@ -405,21 +361,25 @@ async def send_result(
         user_id,
         channel_id
     ):
+
         await send_open_post(
             message,
             item
         )
+
         return
 
     try:
+
         paid_link = await create_paid_link(
             bot,
             channel_id
         )
 
     except Exception as e:
+
         logger.error(
-            "Paid link error: %s",
+            "Payment link error: %s",
             e
         )
 
@@ -427,6 +387,7 @@ async def send_result(
             "❌ Payment link create nahi ho saka.\n\n"
             "Bot ko channel me Invite Users permission chahiye."
         )
+
         return
 
     prefix = CHANNELS[channel_id]["prefix"]
@@ -464,31 +425,42 @@ async def send_open_post(
     message,
     item
 ):
+
+    post_link = make_post_link(
+        int(item["channel_id"]),
+        int(item["message_id"])
+    )
+
     caption = (
         f"🏷️ <b>{item['code']}</b>\n\n"
-        f"🎬 <b>{item['name']}</b>\n\n"
-        f"📝 {item['description']}"
+        f"🎬 <b>{item.get('name') or 'Video'}</b>\n\n"
+        f"📝 {item.get('description') or 'No description available.'}"
     )
 
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
                 "📂 Open Post",
-                url=item["post_link"]
+                url=post_link
             )
         ]
     ])
 
     if item.get("photo"):
+
         try:
+
             await message.reply_photo(
                 photo=item["photo"],
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+
             return
+
         except Exception as e:
+
             logger.warning(
                 "Photo send failed: %s",
                 e
@@ -509,6 +481,7 @@ async def search_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not update.message:
         return
 
@@ -518,37 +491,44 @@ async def search_handler(
     ).strip()
 
     if len(query) < 2:
+
         await update.message.reply_text(
             "🔎 Code ya video name type karo."
         )
+
         return
 
     results = search_items(query)
 
     if not results:
+
         await update.message.reply_text(
             "❌ No result found.\n\n"
             "Example:\n"
             "1P-234\n"
             "2P-001"
         )
+
         return
 
     if len(results) == 1:
+
         await send_result(
             update.message,
             context.bot,
             update.effective_user.id,
             results[0]
         )
+
         return
 
     buttons = []
 
     for item in results:
+
         label = (
             f"📂 {item['code']} — "
-            f"{item['name']}"
+            f"{item.get('name') or 'Video'}"
         )
 
         buttons.append([
@@ -574,6 +554,7 @@ async def button_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     query = update.callback_query
 
     await query.answer()
@@ -584,19 +565,41 @@ async def button_handler(
         .upper()
     )
 
-    item = DATA.get(code)
+    try:
 
-    if not item:
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .eq("code", code)
+            .limit(1)
+            .execute()
+        )
+
+        results = response.data or []
+
+    except Exception as e:
+
+        logger.error(
+            "Database error: %s",
+            e
+        )
+
+        results = []
+
+    if not results:
+
         await query.message.reply_text(
             "❌ Result available nahi hai."
         )
+
         return
 
     await send_result(
         query.message,
         context.bot,
         query.from_user.id,
-        item
+        results[0]
     )
 
 
@@ -608,6 +611,7 @@ async def error_handler(
     update,
     context
 ):
+
     logger.exception(
         "Telegram error: %s",
         context.error
