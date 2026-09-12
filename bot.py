@@ -1,5 +1,6 @@
 import os
 import re
+import html
 import logging
 
 from supabase import create_client
@@ -30,7 +31,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 
 # =========================================================
-# CHANNEL SETTINGS
+# CHANNELS
 # =========================================================
 
 CHANNELS = {
@@ -105,46 +106,28 @@ SEARCH_BOT_URL = "https://t.me/TSB_Video_Search_Bot"
 # NORMALIZE CODE
 # =========================================================
 
-def normalize_code(text):
+def normalize_code(value):
 
-    if not text:
-        return None
+    if value is None:
+        return ""
 
-    text = str(text).strip().upper()
-
-    # Remove unwanted spaces around hyphen
-    text = re.sub(
-        r"\s*-\s*",
-        "-",
-        text,
-    )
+    value = str(value).strip().upper()
 
     # Remove all spaces
-    text = re.sub(
+    value = re.sub(
         r"\s+",
         "",
-        text,
+        value,
     )
 
-    # Accept 1P-444 / 2P-555 / 3P-123 / 4P-999
-    match = re.fullmatch(
-        r"([1-4]P)-([A-Z0-9_-]+)",
-        text,
-        re.IGNORECASE,
-    )
+    # Make hyphen format consistent
+    value = value.replace("_", "-")
 
-    if match:
-        return (
-            match.group(1).upper()
-            + "-"
-            + match.group(2).upper()
-        )
-
-    return None
+    return value
 
 
 # =========================================================
-# EXTRACT CODE FROM MESSAGE
+# EXTRACT CODE
 # =========================================================
 
 def extract_code(text):
@@ -154,13 +137,24 @@ def extract_code(text):
 
     text = str(text).strip().upper()
 
-    # Direct code
-    code = normalize_code(text)
+    # Remove spaces around hyphen
+    text = re.sub(
+        r"\s*-\s*",
+        "-",
+        text,
+    )
 
-    if code:
-        return code
+    # Direct exact code
+    match = re.fullmatch(
+        r"[1-4]P-[A-Z0-9_-]+",
+        text,
+        re.IGNORECASE,
+    )
 
-    # Search code inside text
+    if match:
+        return normalize_code(text)
+
+    # Code inside a sentence
     match = re.search(
         r"\b([1-4]P)\s*-\s*([A-Z0-9_-]+)\b",
         text,
@@ -168,11 +162,8 @@ def extract_code(text):
     )
 
     if match:
-
-        return (
-            match.group(1).upper()
-            + "-"
-            + match.group(2).upper()
+        return normalize_code(
+            f"{match.group(1)}-{match.group(2)}"
         )
 
     return None
@@ -198,6 +189,57 @@ def make_post_link(
 
 
 # =========================================================
+# LOAD ALL DATABASE ROWS
+# =========================================================
+
+def load_all_videos():
+
+    all_rows = []
+
+    page_size = 1000
+    start = 0
+
+    while True:
+
+        end = start + page_size - 1
+
+        logger.info(
+            "Loading database rows %s-%s",
+            start,
+            end,
+        )
+
+        response = (
+            supabase
+            .table("videos")
+            .select("*")
+            .range(start, end)
+            .execute()
+        )
+
+        rows = response.data or []
+
+        all_rows.extend(rows)
+
+        logger.info(
+            "Loaded %s rows",
+            len(rows),
+        )
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    logger.info(
+        "TOTAL DATABASE ROWS: %s",
+        len(all_rows),
+    )
+
+    return all_rows
+
+
+# =========================================================
 # DATABASE SEARCH
 # =========================================================
 
@@ -208,145 +250,103 @@ def search_items(query):
     if not query:
         return []
 
-    try:
+    # Load all saved videos
+    rows = load_all_videos()
 
-        # =================================================
-        # EXTRACT / NORMALIZE CODE
-        # =================================================
+    if not rows:
+        logger.info(
+            "DATABASE IS EMPTY"
+        )
+        return []
 
-        code = extract_code(query)
+    # =====================================================
+    # CODE SEARCH
+    # =====================================================
+
+    requested_code = extract_code(query)
+
+    logger.info(
+        "SEARCH QUERY: %s",
+        query,
+    )
+
+    logger.info(
+        "REQUESTED CODE: %s",
+        requested_code,
+    )
+
+    if requested_code:
+
+        wanted = normalize_code(
+            requested_code
+        )
+
+        matched = []
+
+        for row in rows:
+
+            saved_code = normalize_code(
+                row.get("code")
+            )
+
+            if saved_code == wanted:
+                matched.append(row)
 
         logger.info(
-            "USER QUERY: %s",
-            query,
+            "CODE MATCHES: %s",
+            len(matched),
         )
+
+        if matched:
+            return matched
+
+    # =====================================================
+    # NAME SEARCH
+    # =====================================================
+
+    search_text = query.lower()
+
+    name_results = []
+
+    for row in rows:
+
+        name = str(
+            row.get("name") or ""
+        ).lower()
+
+        if search_text in name:
+            name_results.append(row)
+
+    if name_results:
 
         logger.info(
-            "NORMALIZED CODE: %s",
-            code,
+            "NAME MATCHES: %s",
+            len(name_results),
         )
 
-        # =================================================
-        # 1. EXACT CODE SEARCH
-        # =================================================
+        return name_results
 
-        if code:
+    # =====================================================
+    # DESCRIPTION SEARCH
+    # =====================================================
 
-            response = (
-                supabase
-                .table("videos")
-                .select("*")
-                .eq("code", code)
-                .limit(50)
-                .execute()
-            )
+    description_results = []
 
-            results = response.data or []
+    for row in rows:
 
-            logger.info(
-                "EXACT CODE RESULTS: %s",
-                len(results),
-            )
+        description = str(
+            row.get("description") or ""
+        ).lower()
 
-            if results:
-                return results
+        if search_text in description:
+            description_results.append(row)
 
-        # =================================================
-        # 2. CASE-INSENSITIVE CODE SEARCH
-        # =================================================
+    logger.info(
+        "DESCRIPTION MATCHES: %s",
+        len(description_results),
+    )
 
-        if code:
-
-            response = (
-                supabase
-                .table("videos")
-                .select("*")
-                .ilike(
-                    "code",
-                    code,
-                )
-                .limit(50)
-                .execute()
-            )
-
-            results = response.data or []
-
-            logger.info(
-                "CASE-INSENSITIVE CODE RESULTS: %s",
-                len(results),
-            )
-
-            if results:
-                return results
-
-        # =================================================
-        # 3. PARTIAL CODE SEARCH
-        # =================================================
-
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .ilike(
-                "code",
-                f"%{query}%",
-            )
-            .limit(50)
-            .execute()
-        )
-
-        results = response.data or []
-
-        if results:
-            return results
-
-        # =================================================
-        # 4. NAME SEARCH
-        # =================================================
-
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .ilike(
-                "name",
-                f"%{query}%",
-            )
-            .limit(50)
-            .execute()
-        )
-
-        results = response.data or []
-
-        if results:
-            return results
-
-        # =================================================
-        # 5. DESCRIPTION SEARCH
-        # =================================================
-
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .ilike(
-                "description",
-                f"%{query}%",
-            )
-            .limit(50)
-            .execute()
-        )
-
-        return response.data or []
-
-    except Exception as e:
-
-        logger.exception(
-            "DATABASE SEARCH ERROR: %s",
-            e,
-        )
-
-        raise
+    return description_results
 
 
 # =========================================================
@@ -385,8 +385,8 @@ async def is_member(
     try:
 
         member = await bot.get_chat_member(
-            channel_id,
-            user_id,
+            chat_id=channel_id,
+            user_id=user_id,
         )
 
         if member.status in (
@@ -460,6 +460,11 @@ async def send_open_post(
 
     except Exception:
 
+        logger.exception(
+            "INVALID POST DATA: %s",
+            item,
+        )
+
         await message.reply_text(
             "❌ Post information गलत है."
         )
@@ -467,7 +472,7 @@ async def send_open_post(
         return
 
     # =====================================================
-    # EXACT POST LINK
+    # EXACT TELEGRAM POST
     # =====================================================
 
     post_link = make_post_link(
@@ -475,19 +480,25 @@ async def send_open_post(
         message_id,
     )
 
-    code = (
-        item.get("code")
-        or "Unknown"
+    code = html.escape(
+        str(
+            item.get("code")
+            or "Unknown"
+        )
     )
 
-    name = (
-        item.get("name")
-        or "Video"
+    name = html.escape(
+        str(
+            item.get("name")
+            or "Video"
+        )
     )
 
-    description = (
-        item.get("description")
-        or "No description available."
+    description = html.escape(
+        str(
+            item.get("description")
+            or "No description available."
+        )
     )
 
     caption = (
@@ -508,7 +519,7 @@ async def send_open_post(
     )
 
     # =====================================================
-    # PHOTO
+    # PHOTO RESULT
     # =====================================================
 
     if item.get("photo"):
@@ -567,7 +578,16 @@ async def send_result(
 
         return
 
+    # =====================================================
+    # CHANNEL VALIDATION
+    # =====================================================
+
     if channel_id not in CHANNELS:
+
+        logger.error(
+            "UNKNOWN CHANNEL ID: %s",
+            channel_id,
+        )
 
         await message.reply_text(
             "❌ Channel configured नहीं है."
@@ -576,7 +596,7 @@ async def send_result(
         return
 
     # =====================================================
-    # CHECK ACCESS
+    # CHECK USER ACCESS
     # =====================================================
 
     if await is_member(
@@ -593,7 +613,7 @@ async def send_result(
         return
 
     # =====================================================
-    # PAYMENT
+    # PAYMENT LINK
     # =====================================================
 
     try:
@@ -603,10 +623,11 @@ async def send_result(
             channel_id,
         )
 
-    except Exception:
+    except Exception as e:
 
         logger.exception(
-            "PAYMENT LINK ERROR"
+            "PAYMENT LINK ERROR: %s",
+            e,
         )
 
         await message.reply_text(
@@ -678,7 +699,7 @@ async def search_handler(
         return
 
     logger.info(
-        "SEARCH REQUEST: %s",
+        "USER SEARCH: %s",
         query,
     )
 
@@ -692,7 +713,12 @@ async def search_handler(
             query
         )
 
-    except Exception:
+    except Exception as e:
+
+        logger.exception(
+            "SEARCH DATABASE ERROR: %s",
+            e,
+        )
 
         await update.message.reply_text(
             "⚠️ Database search error.\n\n"
@@ -739,14 +765,14 @@ async def search_handler(
 
     buttons = []
 
-    for item in results:
+    for index, item in enumerate(results):
 
-        code = (
+        code = str(
             item.get("code")
             or "Unknown"
         )
 
-        name = (
+        name = str(
             item.get("name")
             or "Video"
         )
@@ -755,11 +781,22 @@ async def search_handler(
             f"📂 {code} — {name}"
         )
 
+        # Telegram callback data limit
+        # Keep callback short.
+        callback_code = normalize_code(
+            code
+        )
+
+        if len(callback_code) > 50:
+            callback_code = callback_code[:50]
+
         buttons.append(
             [
                 InlineKeyboardButton(
                     label[:60],
-                    callback_data=f"open:{code}",
+                    callback_data=(
+                        f"open:{callback_code}"
+                    ),
                 )
             ]
         )
@@ -785,27 +822,33 @@ async def button_handler(
 
     await query.answer()
 
+    if not query.data:
+        return
+
     code = (
         query.data
         .split(
             "open:",
             1,
         )[1]
-        .upper()
     )
+
+    code = normalize_code(
+        code
+    )
+
+    logger.info(
+        "BUTTON CODE: %s",
+        code,
+    )
+
+    # =====================================================
+    # LOAD DATABASE
+    # =====================================================
 
     try:
 
-        response = (
-            supabase
-            .table("videos")
-            .select("*")
-            .eq("code", code)
-            .limit(1)
-            .execute()
-        )
-
-        results = response.data or []
+        rows = load_all_videos()
 
     except Exception:
 
@@ -819,6 +862,22 @@ async def button_handler(
 
         return
 
+    # =====================================================
+    # FIND EXACT ROW
+    # =====================================================
+
+    results = []
+
+    for row in rows:
+
+        saved_code = normalize_code(
+            row.get("code")
+        )
+
+        if saved_code == code:
+
+            results.append(row)
+
     if not results:
 
         await query.message.reply_text(
@@ -826,6 +885,10 @@ async def button_handler(
         )
 
         return
+
+    # =====================================================
+    # OPEN FIRST EXACT MATCH
+    # =====================================================
 
     await send_result(
         query.message,
@@ -863,7 +926,10 @@ def main():
         .build()
     )
 
+    # =====================================================
     # START
+    # =====================================================
+
     application.add_handler(
         CommandHandler(
             "start",
@@ -871,7 +937,10 @@ def main():
         )
     )
 
+    # =====================================================
     # HELP
+    # =====================================================
+
     application.add_handler(
         CommandHandler(
             "help",
@@ -879,7 +948,10 @@ def main():
         )
     )
 
+    # =====================================================
     # RESULT BUTTON
+    # =====================================================
+
     application.add_handler(
         CallbackQueryHandler(
             button_handler,
@@ -887,7 +959,10 @@ def main():
         )
     )
 
+    # =====================================================
     # SEARCH
+    # =====================================================
+
     application.add_handler(
         MessageHandler(
             filters.TEXT
@@ -896,14 +971,34 @@ def main():
         )
     )
 
+    # =====================================================
     # ERROR
+    # =====================================================
+
     application.add_error_handler(
         error_handler
     )
 
     logger.info(
+        "======================================"
+    )
+
+    logger.info(
         "TSB VIDEO SEARCH BOT STARTED"
     )
+
+    logger.info(
+        "SUPABASE URL: %s",
+        SUPABASE_URL,
+    )
+
+    logger.info(
+        "======================================"
+    )
+
+    # =====================================================
+    # RUN
+    # =====================================================
 
     application.run_polling(
         drop_pending_updates=True
@@ -911,7 +1006,7 @@ def main():
 
 
 # =========================================================
-# RUN
+# START PROGRAM
 # =========================================================
 
 if __name__ == "__main__":
