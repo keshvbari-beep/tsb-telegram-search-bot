@@ -1,16 +1,7 @@
 import os
 import re
-import html
 import logging
-
-from supabase import create_client
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -19,239 +10,97 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from supabase import create_client, Client
 
-
-# =========================================================
-# CONFIG
-# =========================================================
+# =========================
+# SETTINGS
+# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "")
 
 SUPPORT_URL = "https://t.me/RajanChauhan_club"
 
-
-# =========================================================
-# CHANNEL CONFIG
-# =========================================================
-
 CHANNELS = {
-    -1004338671388: {
+    "-1004338671388": {
         "name": "Channel 1",
-        "prefix": "1P",
+        "prefix": "1P-",
         "price": 299,
     },
-
-    -1004490954138: {
+    "-1004490954138": {
         "name": "Channel 2",
-        "prefix": "2P",
+        "prefix": "2P-",
         "price": 299,
     },
-
-    -1003963263624: {
+    "-1003963263624": {
         "name": "Channel 3",
-        "prefix": "3P",
+        "prefix": "3P-",
         "price": 299,
     },
-
-    -1003472229143: {
+    "-1003472229143": {
         "name": "Channel 4",
-        "prefix": "4P",
+        "prefix": "4P-",
         "price": 299,
     },
 }
 
-
-# =========================================================
-# LOGGING
-# =========================================================
-
 logging.basicConfig(
-    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 
-logger = logging.getLogger("TSB_SEARCH_BOT")
+logger = logging.getLogger(__name__)
 
-
-# =========================================================
-# ENV CHECK
-# =========================================================
-
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is missing")
-
-if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL is missing")
-
-if not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_KEY is missing")
-
-
-# =========================================================
+# =========================
 # SUPABASE
-# =========================================================
+# =========================
 
-supabase = create_client(
+supabase: Client = create_client(
     SUPABASE_URL,
-    SUPABASE_KEY,
+    SUPABASE_KEY
 )
 
 
-# =========================================================
-# CODE NORMALIZATION
-# =========================================================
+# =========================
+# NORMALIZE
+# =========================
 
-def normalize_code(value):
-    """
-    Converts codes into a common format.
-
-    Examples:
-        1P-555  -> 1P555
-        1p-555  -> 1P555
-        1P 555  -> 1P555
-        1P_555  -> 1P555
-    """
-
-    if value is None:
-        return ""
-
-    value = str(value).upper().strip()
-
-    # Remove all spaces
-    value = re.sub(r"\s+", "", value)
-
-    # Remove separators
-    value = value.replace("-", "")
-    value = value.replace("_", "")
-
-    return value
-
-
-# =========================================================
-# DISPLAY CODE
-# =========================================================
-
-def clean_display_code(value):
-    if not value:
-        return "Unknown"
-
-    return str(value).strip()
-
-
-# =========================================================
-# EXTRACT CODE FROM SEARCH
-# =========================================================
-
-def extract_code(text):
-
+def normalize_code(text):
     if not text:
-        return None
+        return ""
 
     text = str(text).strip().upper()
 
-    # Remove spaces around hyphen
-    text = re.sub(
-        r"\s*-\s*",
-        "-",
-        text,
-    )
+    text = text.replace(" ", "")
+    text = text.replace("_", "-")
 
-    # Direct format
-    match = re.fullmatch(
-        r"[1-4]P-[A-Z0-9]+",
-        text,
-    )
-
-    if match:
-        return match.group(0)
-
-    # Without hyphen
-    match = re.fullmatch(
-        r"[1-4]P[A-Z0-9]+",
-        text,
-    )
-
-    if match:
-        value = match.group(0)
-
-        return (
-            value[:2]
-            + "-"
-            + value[2:]
-        )
-
-    # Code inside text
-    match = re.search(
-        r"\b([1-4]P)\s*[-_]?\s*([A-Z0-9]+)\b",
-        text,
-    )
-
-    if match:
-
-        return (
-            match.group(1)
-            + "-"
-            + match.group(2)
-        )
-
-    return None
+    return text
 
 
-# =========================================================
-# TELEGRAM POST LINK
-# =========================================================
-
-def make_post_link(
-    channel_id,
-    message_id,
-):
-
-    channel_id = str(channel_id)
-    message_id = str(message_id)
-
-    if channel_id.startswith("-100"):
-        channel_id = channel_id[4:]
-
-    return (
-        f"https://t.me/c/{channel_id}/{message_id}"
-    )
-
-
-# =========================================================
-# LOAD DATABASE
-# =========================================================
+# =========================
+# LOAD ALL VIDEOS
+# =========================
 
 def load_all_videos():
-
     all_rows = []
-
-    page_size = 1000
     start = 0
+    page_size = 1000
 
     while True:
-
-        end = start + page_size - 1
-
-        logger.info(
-            "Loading database rows %s - %s",
-            start,
-            end,
-        )
-
         response = (
             supabase
             .table("videos")
-            .select(
-                "id,created_at,code,channel_id,"
-                "message_id,name,description,photo"
-            )
-            .range(start, end)
+            .select("*")
+            .range(start, start + page_size - 1)
             .execute()
         )
 
         rows = response.data or []
+
+        if not rows:
+            break
 
         all_rows.extend(rows)
 
@@ -260,208 +109,121 @@ def load_all_videos():
 
         start += page_size
 
-    logger.info(
-        "Total database rows loaded: %s",
-        len(all_rows),
-    )
+    logger.info("Loaded %s videos from Supabase", len(all_rows))
 
     return all_rows
 
 
-# =========================================================
-# SEARCH DATABASE
-# =========================================================
+# =========================
+# SEARCH
+# =========================
 
-def search_items(search_text):
+def search_videos(query):
+    query = query.strip()
 
-    search_text = str(
-        search_text or ""
-    ).strip()
-
-    if not search_text:
+    if not query:
         return []
 
-    logger.info(
-        "===================================="
-    )
-
-    logger.info(
-        "SEARCH: %s",
-        search_text,
-    )
-
-    # =====================================================
-    # LOAD ALL RECORDS
-    # =====================================================
+    normalized_query = normalize_code(query)
 
     rows = load_all_videos()
 
-    if not rows:
-
-        logger.warning(
-            "No rows found in videos table"
-        )
-
-        return []
-
-    # =====================================================
-    # 1. EXACT NORMALIZED CODE SEARCH
-    # =====================================================
-
-    requested_code = extract_code(
-        search_text
-    )
-
-    if requested_code:
-
-        wanted_code = normalize_code(
-            requested_code
-        )
-
-        logger.info(
-            "Normalized search code: %s",
-            wanted_code,
-        )
-
-        exact_results = []
-
-        for row in rows:
-
-            saved_code = normalize_code(
-                row.get("code")
-            )
-
-            if saved_code == wanted_code:
-
-                exact_results.append(row)
-
-                logger.info(
-                    "CODE MATCH: %s | message=%s",
-                    row.get("code"),
-                    row.get("message_id"),
-                )
-
-        if exact_results:
-
-            logger.info(
-                "Exact code results: %s",
-                len(exact_results),
-            )
-
-            return exact_results
-
-    # =====================================================
-    # 2. PARTIAL NORMALIZED CODE SEARCH
-    # =====================================================
-
-    normalized_query = normalize_code(
-        search_text
-    )
-
-    if normalized_query:
-
-        partial_results = []
-
-        for row in rows:
-
-            saved_code = normalize_code(
-                row.get("code")
-            )
-
-            if (
-                normalized_query
-                in saved_code
-            ):
-
-                partial_results.append(row)
-
-        if partial_results:
-
-            logger.info(
-                "Partial code results: %s",
-                len(partial_results),
-            )
-
-            return partial_results
-
-    # =====================================================
-    # 3. NAME SEARCH
-    # =====================================================
-
-    query_lower = search_text.lower()
-
-    name_results = []
+    exact = []
+    partial = []
+    text_matches = []
 
     for row in rows:
 
-        name = str(
-            row.get("name") or ""
-        ).lower()
+        code = normalize_code(row.get("code", ""))
 
-        if query_lower in name:
+        name = str(row.get("name", "") or "")
+        description = str(row.get("description", "") or "")
 
-            name_results.append(row)
+        name_lower = name.lower()
+        description_lower = description.lower()
 
-    if name_results:
+        # EXACT CODE
+        if code == normalized_query:
+            exact.append(row)
+            continue
 
-        logger.info(
-            "Name results: %s",
-            len(name_results),
-        )
+        # PARTIAL CODE
+        if normalized_query and normalized_query in code:
+            partial.append(row)
+            continue
 
-        return name_results
+        # NAME / DESCRIPTION
+        q_lower = query.lower()
 
-    # =====================================================
-    # 4. DESCRIPTION SEARCH
-    # =====================================================
+        if q_lower in name_lower or q_lower in description_lower:
+            text_matches.append(row)
 
-    description_results = []
+    if exact:
+        return exact
 
-    for row in rows:
+    if partial:
+        return partial
 
-        description = str(
-            row.get("description") or ""
-        ).lower()
+    return text_matches
 
-        if query_lower in description:
 
-            description_results.append(row)
+# =========================
+# POST LINK
+# =========================
 
-    if description_results:
+def make_post_link(channel_id, message_id):
 
-        logger.info(
-            "Description results: %s",
-            len(description_results),
-        )
+    channel_id = str(channel_id)
 
-        return description_results
+    if channel_id.startswith("-100"):
+        public_part = channel_id[4:]
+    else:
+        public_part = channel_id.lstrip("-")
 
-    # =====================================================
-    # NO RESULT
-    # =====================================================
+    return f"https://t.me/c/{public_part}/{message_id}"
 
-    logger.info(
-        "NO RESULT FOUND"
+
+# =========================
+# START
+# =========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = (
+        "🔍 *TSB video Search*\n\n"
+        "अपना Video Code या Name भेजें।\n\n"
+        "Example:\n"
+        "`1P-234`\n"
+        "`2P-001`\n"
+        "`3P-125`\n"
+        "`4P-500`\n\n"
+        "आप Video का नाम भी search कर सकते हैं।"
     )
 
-    return []
-
-
-# =========================================================
-# START COMMAND
-# =========================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    if not update.message:
-        return
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💬 Support",
+                url=SUPPORT_URL
+            )
+        ]
+    ]
 
     await update.message.reply_text(
-        "🔎 TSB video Search\n\n"
-        "Apna Code ya Video Name search karo.\n\n"
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# =========================
+# HELP
+# =========================
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "🔍 Search करने के लिए Video Code या Video Name भेजें।\n\n"
         "Example:\n"
         "1P-234\n"
         "2P-001\n"
@@ -470,394 +232,222 @@ async def start(
     )
 
 
-# =========================================================
-# HELP COMMAND
-# =========================================================
+# =========================
+# DB TEST
+# =========================
 
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def dbtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not update.message:
+    user_id = str(update.effective_user.id)
+
+    if ADMIN_USER_ID and user_id != str(ADMIN_USER_ID):
         return
-
-    await update.message.reply_text(
-        "🔎 TSB video Search\n\n"
-        "Video Code ya Name bhejo.\n\n"
-        "Example:\n"
-        "1P-234\n"
-        "2P-001\n"
-        "3P-125\n"
-        "4P-500"
-    )
-
-
-# =========================================================
-# CHECK MEMBERSHIP
-# =========================================================
-
-async def is_member(
-    bot,
-    user_id,
-    channel_id,
-):
 
     try:
 
-        member = await bot.get_chat_member(
-            chat_id=channel_id,
-            user_id=user_id,
+        rows = load_all_videos()
+
+        if not rows:
+            await update.message.reply_text(
+                "⚠️ Supabase connected.\n"
+                "लेकिन videos table में कोई row नहीं मिली।"
+            )
+            return
+
+        latest = rows[-10:]
+
+        text = (
+            "✅ DATABASE CONNECTION OK\n\n"
+            f"📦 Total videos: {len(rows)}\n\n"
+            "Latest records:\n"
         )
 
-        if member.status in (
-            "creator",
-            "administrator",
-            "member",
-        ):
-            return True
-
-        if member.status == "restricted":
-
-            return bool(
-                getattr(
-                    member,
-                    "is_member",
-                    False,
-                )
+        for row in latest:
+            text += (
+                f"\n🔢 {row.get('code')}"
+                f"\n🆔 Message: {row.get('message_id')}"
+                f"\n📢 Channel: {row.get('channel_id')}\n"
             )
 
-        return False
+        await update.message.reply_text(text)
+
+    except Exception as e:
+
+        logger.exception("Database test failed")
+
+        await update.message.reply_text(
+            "❌ DATABASE ERROR\n\n"
+            f"{type(e).__name__}: {e}"
+        )
+
+
+# =========================
+# SEND SINGLE RESULT
+# =========================
+
+async def send_result(
+    update,
+    context,
+    row
+):
+
+    user_id = update.effective_user.id
+
+    channel_id = str(row.get("channel_id"))
+    message_id = row.get("message_id")
+
+    code = row.get("code", "Unknown")
+    name = row.get("name", "")
+    description = row.get("description", "")
+    photo = row.get("photo")
+
+    channel_info = CHANNELS.get(channel_id)
+
+    if not channel_info:
+
+        await update.message.reply_text(
+            "⚠️ Channel configuration not found."
+        )
+        return
+
+    # =========================
+    # CHECK MEMBERSHIP
+    # =========================
+
+    try:
+
+        member = await context.bot.get_chat_member(
+            chat_id=int(channel_id),
+            user_id=user_id
+        )
+
+        status = member.status
+
+        allowed = status in (
+            "member",
+            "administrator",
+            "creator"
+        )
 
     except Exception as e:
 
         logger.warning(
             "Membership check failed: %s",
-            e,
+            e
         )
 
-        return False
+        allowed = False
 
+    # =========================
+    # USER HAS ACCESS
+    # =========================
 
-# =========================================================
-# CREATE SUBSCRIPTION LINK
-# =========================================================
+    if allowed:
 
-async def create_paid_link(
-    bot,
-    channel_id,
-):
-
-    channel = CHANNELS.get(
-        channel_id
-    )
-
-    if not channel:
-        raise ValueError(
-            "Unknown channel"
+        post_link = make_post_link(
+            channel_id,
+            message_id
         )
 
-    result = (
-        await bot.create_chat_subscription_invite_link(
-            chat_id=channel_id,
-            name=(
-                f"TSB {channel['name']}"
-            ),
-            subscription_period=2592000,
-            subscription_price=channel["price"],
-        )
-    )
-
-    return result.invite_link
-
-
-# =========================================================
-# SEND OPEN POST
-# =========================================================
-
-async def send_open_post(
-    message,
-    item,
-):
-
-    try:
-
-        channel_id = int(
-            item.get("channel_id")
+        caption = (
+            f"🎬 *{name}*\n\n"
+            f"🔢 Code: `{code}`\n\n"
+            f"📄 {description}"
         )
 
-        message_id = int(
-            item.get("message_id")
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Invalid channel/message data"
-        )
-
-        await message.reply_text(
-            "❌ Post information invalid hai."
-        )
-
-        return
-
-    # =====================================================
-    # POST LINK
-    # =====================================================
-
-    post_link = make_post_link(
-        channel_id,
-        message_id,
-    )
-
-    # =====================================================
-    # DATA
-    # =====================================================
-
-    code = html.escape(
-        clean_display_code(
-            item.get("code")
-        )
-    )
-
-    name = html.escape(
-        str(
-            item.get("name")
-            or "Video"
-        ).strip()
-    )
-
-    description = html.escape(
-        str(
-            item.get("description")
-            or "No description available."
-        ).strip()
-    )
-
-    caption = (
-        f"🏷️ <b>{code}</b>\n\n"
-        f"🎬 <b>{name}</b>\n\n"
-        f"📝 {description}"
-    )
-
-    keyboard = InlineKeyboardMarkup(
-        [
+        keyboard = [
             [
                 InlineKeyboardButton(
                     "📂 Open Post",
-                    url=post_link,
+                    url=post_link
                 )
             ]
         ]
-    )
 
-    # =====================================================
-    # PHOTO
-    # =====================================================
+        if photo:
 
-    photo = item.get("photo")
+            try:
 
-    if photo:
+                await update.message.reply_photo(
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(
+                        keyboard
+                    )
+                )
 
-        try:
+                return
 
-            await message.reply_photo(
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=keyboard,
+            except Exception as e:
+
+                logger.warning(
+                    "Photo send failed: %s",
+                    e
+                )
+
+        await update.message.reply_text(
+            caption,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
             )
-
-            return
-
-        except Exception as e:
-
-            logger.warning(
-                "Photo send failed: %s",
-                e,
-            )
-
-    # =====================================================
-    # TEXT FALLBACK
-    # =====================================================
-
-    await message.reply_text(
-        caption,
-        parse_mode="HTML",
-        reply_markup=keyboard,
-    )
-
-
-# =========================================================
-# SEND RESULT
-# =========================================================
-
-async def send_result(
-    message,
-    bot,
-    user_id,
-    item,
-):
-
-    try:
-
-        channel_id = int(
-            item.get("channel_id")
-        )
-
-    except Exception:
-
-        await message.reply_text(
-            "❌ Channel information invalid hai."
         )
 
         return
 
-    # =====================================================
-    # CHECK CHANNEL
-    # =====================================================
+    # =========================
+    # NO ACCESS
+    # =========================
 
-    channel = CHANNELS.get(
-        channel_id
-    )
-
-    if not channel:
-
-        logger.error(
-            "Unknown channel ID: %s",
-            channel_id,
-        )
-
-        await message.reply_text(
-            "❌ Channel configured nahi hai."
-        )
-
-        return
-
-    # =====================================================
-    # MEMBER CHECK
-    # =====================================================
-
-    member = await is_member(
-        bot,
-        user_id,
-        channel_id,
-    )
-
-    if member:
-
-        await send_open_post(
-            message,
-            item,
-        )
-
-        return
-
-    # =====================================================
-    # PAYMENT
-    # =====================================================
-
-    try:
-
-        paid_link = await create_paid_link(
-            bot,
-            channel_id,
-        )
-
-    except Exception as e:
-
-        logger.exception(
-            "Subscription link error: %s",
-            e,
-        )
-
-        await message.reply_text(
-            "❌ Subscription link create nahi ho saka.\n\n"
-            "Please try again later."
-        )
-
-        return
-
-    text = (
-        "🔒 <b>Premium Access Required</b>\n\n"
-        f"Ye video <b>{channel['name']}</b> me hai.\n\n"
-        f"💰 Monthly Access: "
-        f"<b>{channel['price']} Stars</b>\n\n"
-        "Payment ke baad channel access mil jayega."
-    )
-
-    keyboard = InlineKeyboardMarkup(
+    keyboard = [
         [
-            [
-                InlineKeyboardButton(
-                    "💳 Subscribe & Access",
-                    url=paid_link,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "💬 Support",
-                    url=SUPPORT_URL,
-                )
-            ],
+            InlineKeyboardButton(
+                "💳 Subscribe & Access",
+                callback_data=f"pay:{row.get('id')}"
+            )
         ]
+    ]
+
+    await update.message.reply_text(
+        "🔒 *Access Required*\n\n"
+        f"🎬 {name}\n"
+        f"🔢 Code: `{code}`\n\n"
+        f"📢 {channel_info['name']}\n"
+        f"💰 Price: {channel_info['price']} ⭐ / month",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    await message.reply_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=keyboard,
-    )
 
-
-# =========================================================
-# SEARCH MESSAGE
-# =========================================================
+# =========================
+# SEARCH HANDLER
+# =========================
 
 async def search_handler(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
+    context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not update.message:
-        return
+    query = update.message.text.strip()
 
-    search_text = (
-        update.message.text
-        or ""
-    ).strip()
-
-    if len(search_text) < 2:
-
-        await update.message.reply_text(
-            "🔎 Code ya Video Name bhejo."
-        )
-
+    if query.startswith("/"):
         return
 
     try:
 
-        results = search_items(
-            search_text
-        )
+        results = search_videos(query)
 
     except Exception as e:
 
-        logger.exception(
-            "DATABASE SEARCH ERROR"
-        )
+        logger.exception("Search failed")
 
         await update.message.reply_text(
-            "⚠️ Database search error.\n\n"
-            "Please try again."
+            "❌ Search database error.\n\n"
+            f"{type(e).__name__}: {e}"
         )
 
         return
-
-    # =====================================================
-    # NO RESULT
-    # =====================================================
 
     if not results:
 
@@ -872,265 +462,421 @@ async def search_handler(
 
         return
 
-    # =====================================================
+    # =========================
     # ONE RESULT
-    # =====================================================
+    # =========================
 
     if len(results) == 1:
 
         await send_result(
-            update.message,
-            context.bot,
-            update.effective_user.id,
-            results[0],
+            update,
+            context,
+            results[0]
         )
 
         return
 
-    # =====================================================
+    # =========================
     # MULTIPLE RESULTS
-    # =====================================================
+    # =========================
 
     buttons = []
 
-    for index, item in enumerate(
-        results
-    ):
+    for row in results[:20]:
 
-        code = clean_display_code(
-            item.get("code")
-        )
+        db_id = row.get("id")
 
-        name = str(
-            item.get("name")
-            or "Video"
-        ).strip()
+        code = row.get("code", "")
+        name = row.get("name", "")
 
-        # Callback uses database ID.
-        # This is safer than putting the code
-        # into callback_data.
-        row_id = str(
-            item.get("id")
-            or ""
-        )
+        label = f"{code} - {name}"
 
-        if not row_id:
-            continue
-
-        label = (
-            f"📂 {code} — {name}"
-        )
+        if len(label) > 60:
+            label = label[:57] + "..."
 
         buttons.append(
             [
                 InlineKeyboardButton(
-                    label[:60],
-                    callback_data=(
-                        f"video:{row_id}"
-                    ),
+                    label,
+                    callback_data=f"result:{db_id}"
                 )
             ]
         )
 
-    if not buttons:
-
-        await update.message.reply_text(
-            "❌ Result information invalid hai."
-        )
-
-        return
-
     await update.message.reply_text(
-        f"🔎 {len(buttons)} results found:",
-        reply_markup=InlineKeyboardMarkup(
-            buttons
-        ),
+        f"🔎 {len(results)} results found.\n\n"
+        "नीचे अपना result चुनें:",
+        reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 
-# =========================================================
-# MULTIPLE RESULT BUTTON
-# =========================================================
+# =========================
+# CALLBACK
+# =========================
 
-async def button_handler(
+async def callback_handler(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
+    context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
 
-    if not query:
-        return
-
     await query.answer()
 
-    data = query.data or ""
+    data = query.data
 
-    if not data.startswith(
-        "video:"
-    ):
+    # =========================
+    # RESULT BUTTON
+    # =========================
+
+    if data.startswith("result:"):
+
+        db_id = data.split(":", 1)[1]
+
+        try:
+
+            response = (
+                supabase
+                .table("videos")
+                .select("*")
+                .eq("id", db_id)
+                .limit(1)
+                .execute()
+            )
+
+            rows = response.data or []
+
+            if not rows:
+
+                await query.message.reply_text(
+                    "❌ Result no longer available."
+                )
+
+                return
+
+            row = rows[0]
+
+            # create temporary update-like handling
+            user_id = query.from_user.id
+
+            channel_id = str(row.get("channel_id"))
+            message_id = row.get("message_id")
+
+            code = row.get("code", "")
+            name = row.get("name", "")
+            description = row.get("description", "")
+            photo = row.get("photo")
+
+            try:
+
+                member = await context.bot.get_chat_member(
+                    chat_id=int(channel_id),
+                    user_id=user_id
+                )
+
+                allowed = member.status in (
+                    "member",
+                    "administrator",
+                    "creator"
+                )
+
+            except Exception:
+
+                allowed = False
+
+            if allowed:
+
+                post_link = make_post_link(
+                    channel_id,
+                    message_id
+                )
+
+                caption = (
+                    f"🎬 *{name}*\n\n"
+                    f"🔢 Code: `{code}`\n\n"
+                    f"📄 {description}"
+                )
+
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "📂 Open Post",
+                            url=post_link
+                        )
+                    ]
+                ]
+
+                if photo:
+
+                    await query.message.reply_photo(
+                        photo=photo,
+                        caption=caption,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(
+                            keyboard
+                        )
+                    )
+
+                else:
+
+                    await query.message.reply_text(
+                        caption,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(
+                            keyboard
+                        )
+                    )
+
+            else:
+
+                channel_info = CHANNELS.get(channel_id)
+
+                price = (
+                    channel_info["price"]
+                    if channel_info
+                    else 299
+                )
+
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "💳 Subscribe & Access",
+                            callback_data=f"pay:{db_id}"
+                        )
+                    ]
+                ]
+
+                await query.message.reply_text(
+                    "🔒 *Access Required*\n\n"
+                    f"🎬 {name}\n"
+                    f"🔢 Code: `{code}`\n\n"
+                    f"💰 Price: {price} ⭐ / month",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(
+                        keyboard
+                    )
+                )
+
+        except Exception as e:
+
+            logger.exception("Result callback failed")
+
+            await query.message.reply_text(
+                "❌ Result error.\n\n"
+                f"{type(e).__name__}: {e}"
+            )
+
         return
 
-    row_id = data.split(
-        "video:",
-        1,
-    )[1]
+    # =========================
+    # PAYMENT
+    # =========================
 
-    logger.info(
-        "Selected database ID: %s",
-        row_id,
+    if data.startswith("pay:"):
+
+        db_id = data.split(":", 1)[1]
+
+        try:
+
+            response = (
+                supabase
+                .table("videos")
+                .select("channel_id")
+                .eq("id", db_id)
+                .limit(1)
+                .execute()
+            )
+
+            rows = response.data or []
+
+            if not rows:
+
+                await query.message.reply_text(
+                    "❌ Video record not found."
+                )
+
+                return
+
+            channel_id = str(
+                rows[0].get("channel_id")
+            )
+
+            channel_info = CHANNELS.get(
+                channel_id
+            )
+
+            if not channel_info:
+
+                await query.message.reply_text(
+                    "❌ Channel configuration missing."
+                )
+
+                return
+
+            try:
+
+                invite = await context.bot.create_chat_subscription_invite_link(
+                    chat_id=int(channel_id),
+                    name=f"TSB {channel_info['name']}",
+                    subscription_period=2592000,
+                    subscription_price=channel_info["price"],
+                )
+
+                await query.message.reply_text(
+                    "💳 *Subscription Access*\n\n"
+                    f"📢 {channel_info['name']}\n"
+                    f"💰 {channel_info['price']} ⭐ / month\n\n"
+                    "नीचे payment करके channel access लें:",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "⭐ Pay & Subscribe",
+                                    url=invite.invite_link
+                                )
+                            ]
+                        ]
+                    )
+                )
+
+            except Exception as e:
+
+                logger.exception(
+                    "Subscription creation failed"
+                )
+
+                await query.message.reply_text(
+                    "⚠️ Payment link अभी create नहीं हो पाया।\n\n"
+                    "Please contact Support."
+                )
+
+        except Exception as e:
+
+            logger.exception(
+                "Payment callback failed"
+            )
+
+            await query.message.reply_text(
+                "❌ Payment error."
+            )
+
+        return
+
+
+# =========================
+# ERROR HANDLER
+# =========================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    logger.exception(
+        "Telegram error:",
+        exc_info=context.error
     )
 
-    # =====================================================
-    # FIND EXACT DATABASE ROW
-    # =====================================================
 
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    if not BOT_TOKEN:
+        raise RuntimeError(
+            "BOT_TOKEN missing"
+        )
+
+    if not SUPABASE_URL:
+        raise RuntimeError(
+            "SUPABASE_URL missing"
+        )
+
+    if not SUPABASE_KEY:
+        raise RuntimeError(
+            "SUPABASE_KEY missing"
+        )
+
+    logger.info("Starting TSB Search Bot...")
+
+    # TEST DATABASE BEFORE STARTING
     try:
 
         response = (
             supabase
             .table("videos")
-            .select("*")
-            .eq("id", row_id)
+            .select("id", count="exact")
             .limit(1)
             .execute()
         )
 
-        rows = response.data or []
+        logger.info(
+            "Supabase connection OK. Count: %s",
+            response.count
+        )
 
-    except Exception:
+    except Exception as e:
 
         logger.exception(
-            "BUTTON DATABASE ERROR"
+            "SUPABASE CONNECTION FAILED"
         )
 
-        await query.message.reply_text(
-            "⚠️ Database error."
-        )
-
-        return
-
-    if not rows:
-
-        await query.message.reply_text(
-            "❌ Result available nahi hai."
-        )
-
-        return
-
-    # =====================================================
-    # SEND EXACT ROW
-    # =====================================================
-
-    await send_result(
-        query.message,
-        context.bot,
-        query.from_user.id,
-        rows[0],
-    )
-
-
-# =========================================================
-# ERROR HANDLER
-# =========================================================
-
-async def error_handler(
-    update,
-    context,
-):
-
-    logger.error(
-        "Telegram error: %s",
-        context.error,
-    )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    logger.info(
-        "========================================"
-    )
-
-    logger.info(
-        "TSB VIDEO SEARCH BOT STARTING"
-    )
-
-    logger.info(
-        "========================================"
-    )
-
-    application = (
+    app = (
         Application
         .builder()
         .token(BOT_TOKEN)
         .build()
     )
 
-    # =====================================================
-    # COMMANDS
-    # =====================================================
-
-    application.add_handler(
+    app.add_handler(
         CommandHandler(
             "start",
-            start,
+            start
         )
     )
 
-    application.add_handler(
+    app.add_handler(
         CommandHandler(
             "help",
-            help_command,
+            help_command
         )
     )
 
-    # =====================================================
-    # RESULT BUTTON
-    # =====================================================
+    app.add_handler(
+        CommandHandler(
+            "dbtest",
+            dbtest
+        )
+    )
 
-    application.add_handler(
+    app.add_handler(
         CallbackQueryHandler(
-            button_handler,
-            pattern=r"^video:",
+            callback_handler
         )
     )
 
-    # =====================================================
-    # SEARCH
-    # =====================================================
-
-    application.add_handler(
+    app.add_handler(
         MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            search_handler,
+            filters.TEXT & ~filters.COMMAND,
+            search_handler
         )
     )
 
-    # =====================================================
-    # ERROR
-    # =====================================================
-
-    application.add_error_handler(
+    app.add_error_handler(
         error_handler
     )
 
-    # =====================================================
-    # START POLLING
-    # =====================================================
+    logger.info(
+        "TSB Search Bot is running..."
+    )
 
-    application.run_polling(
+    app.run_polling(
         drop_pending_updates=True
     )
 
-
-# =========================================================
-# RUN
-# =========================================================
 
 if __name__ == "__main__":
     main()
