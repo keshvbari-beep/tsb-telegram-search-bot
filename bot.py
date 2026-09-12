@@ -73,19 +73,13 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN missing"
-    )
+    raise RuntimeError("BOT_TOKEN missing")
 
 if not SUPABASE_URL:
-    raise RuntimeError(
-        "SUPABASE_URL missing"
-    )
+    raise RuntimeError("SUPABASE_URL missing")
 
 if not SUPABASE_KEY:
-    raise RuntimeError(
-        "SUPABASE_KEY missing"
-    )
+    raise RuntimeError("SUPABASE_KEY missing")
 
 
 # =========================================================
@@ -99,7 +93,7 @@ supabase = create_client(
 
 
 # =========================================================
-# SUPPORT / SEARCH BOT
+# LINKS
 # =========================================================
 
 SUPPORT_URL = "https://t.me/RajanChauhan_club"
@@ -127,7 +121,6 @@ def extract_code(text):
     if match:
         return match.group(1).upper()
 
-    # Fallback
     match = re.search(
         r"([1-4]P-[A-Za-z0-9_-]+)",
         text,
@@ -144,19 +137,14 @@ def extract_code(text):
 # POST LINK
 # =========================================================
 
-def make_post_link(
-    channel_id,
-    message_id,
-):
+def make_post_link(channel_id, message_id):
 
     clean_id = str(channel_id)
 
     if clean_id.startswith("-100"):
         clean_id = clean_id[4:]
 
-    return (
-        f"https://t.me/c/{clean_id}/{message_id}"
-    )
+    return f"https://t.me/c/{clean_id}/{message_id}"
 
 
 # =========================================================
@@ -172,17 +160,37 @@ def search_items(query):
 
     try:
 
+        code = extract_code(query)
+
+        logger.info("SEARCH QUERY: %s", query)
+        logger.info("EXTRACTED CODE: %s", code)
+
         # =================================================
-        # 1. EXACT CODE SEARCH
+        # DATABASE CONNECTION TEST
         # =================================================
 
-        code = extract_code(query)
+        test = (
+            supabase
+            .table("videos")
+            .select("id,code,name")
+            .limit(5)
+            .execute()
+        )
+
+        logger.info(
+            "DATABASE TEST SUCCESS: %s",
+            test.data
+        )
+
+        # =================================================
+        # EXACT CODE SEARCH
+        # =================================================
 
         if code:
 
             logger.info(
-                "Exact code search: %s",
-                code,
+                "EXACT CODE SEARCH: %s",
+                code
             )
 
             response = (
@@ -194,13 +202,16 @@ def search_items(query):
                 .execute()
             )
 
-            results = response.data or []
+            logger.info(
+                "EXACT SEARCH RESULT: %s",
+                response.data
+            )
 
-            if results:
-                return results
+            if response.data:
+                return response.data
 
         # =================================================
-        # 2. CODE PARTIAL SEARCH
+        # PARTIAL CODE SEARCH
         # =================================================
 
         response = (
@@ -209,19 +220,22 @@ def search_items(query):
             .select("*")
             .ilike(
                 "code",
-                f"%{query}%",
+                f"%{query}%"
             )
             .limit(10)
             .execute()
         )
 
-        results = response.data or []
+        logger.info(
+            "PARTIAL CODE RESULT: %s",
+            response.data
+        )
 
-        if results:
-            return results
+        if response.data:
+            return response.data
 
         # =================================================
-        # 3. NAME SEARCH
+        # NAME SEARCH
         # =================================================
 
         response = (
@@ -230,19 +244,22 @@ def search_items(query):
             .select("*")
             .ilike(
                 "name",
-                f"%{query}%",
+                f"%{query}%"
             )
             .limit(10)
             .execute()
         )
 
-        results = response.data or []
+        logger.info(
+            "NAME SEARCH RESULT: %s",
+            response.data
+        )
 
-        if results:
-            return results
+        if response.data:
+            return response.data
 
         # =================================================
-        # 4. DESCRIPTION SEARCH
+        # DESCRIPTION SEARCH
         # =================================================
 
         response = (
@@ -251,10 +268,15 @@ def search_items(query):
             .select("*")
             .ilike(
                 "description",
-                f"%{query}%",
+                f"%{query}%"
             )
             .limit(10)
             .execute()
+        )
+
+        logger.info(
+            "DESCRIPTION SEARCH RESULT: %s",
+            response.data
         )
 
         return response.data or []
@@ -262,10 +284,14 @@ def search_items(query):
     except Exception as e:
 
         logger.exception(
-            "DATABASE SEARCH ERROR"
+            "DATABASE SEARCH ERROR: %s",
+            e
         )
 
-        return []
+        # IMPORTANT:
+        # Error ko hide nahi karna.
+        # GitHub Actions log me exact error dikhega.
+        raise
 
 
 # =========================================================
@@ -380,7 +406,10 @@ async def send_open_post(
         message_id,
     )
 
-    code = item.get("code") or "Unknown"
+    code = (
+        item.get("code")
+        or "Unknown"
+    )
 
     name = (
         item.get("name")
@@ -505,7 +534,7 @@ async def send_result(
             channel_id,
         )
 
-    except Exception as e:
+    except Exception:
 
         logger.exception(
             "PAYMENT LINK ERROR"
@@ -584,9 +613,27 @@ async def search_handler(
         query,
     )
 
-    results = search_items(
-        query
-    )
+    # =====================================================
+    # DATABASE SEARCH
+    # =====================================================
+
+    try:
+
+        results = search_items(query)
+
+    except Exception as e:
+
+        logger.exception(
+            "SEARCH HANDLER DATABASE ERROR: %s",
+            e
+        )
+
+        await update.message.reply_text(
+            "⚠️ Database connection/search error.\n\n"
+            "Admin ko GitHub Actions log check karna hoga."
+        )
+
+        return
 
     # =====================================================
     # NO RESULT
@@ -700,7 +747,11 @@ async def button_handler(
             "BUTTON DATABASE ERROR"
         )
 
-        results = []
+        await query.message.reply_text(
+            "⚠️ Database error. Please try again later."
+        )
+
+        return
 
     if not results:
 
@@ -765,7 +816,7 @@ def main():
     )
 
     # =====================================================
-    # MULTIPLE RESULT BUTTON
+    # RESULT BUTTON
     # =====================================================
 
     application.add_handler(
@@ -800,7 +851,7 @@ def main():
     )
 
     # =====================================================
-    # RUN
+    # RUN BOT
     # =====================================================
 
     application.run_polling(
